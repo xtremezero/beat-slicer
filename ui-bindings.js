@@ -145,7 +145,7 @@ function endGame(songCompleted = false) {
             goods: statsGoods,
             oks: statsOks,
             difficulty: CONFIG.difficulty,
-            dotsOnlyMode: CONFIG.dotsOnlyMode,
+            gameMode: CONFIG.gameMode,
             duration: duration,
             songPlayed: songCompleted,
         });
@@ -213,14 +213,19 @@ document.querySelectorAll('.diff-btn').forEach(btn => {
 });
 
 DOM('dots-toggle').addEventListener('click', (e) => {
-    CONFIG.dotsOnlyMode = !CONFIG.dotsOnlyMode;
     const t = e.target;
-    if(CONFIG.dotsOnlyMode) {
+    if (CONFIG.gameMode === 'normal') {
+        CONFIG.gameMode = 'omni';
         t.className = "mt-1 w-full py-1.5 text-[10px] font-bold rounded border transition-all bg-pink-500/20 border-pink-500 text-pink-300 glow cursor-pointer";
-        t.innerText = "OMNI-DIRECTIONAL: ACTIVE";
+        t.innerText = "MODE: OMNI-DIRECTIONAL";
+    } else if (CONFIG.gameMode === 'omni') {
+        CONFIG.gameMode = 'challenge';
+        t.className = "mt-1 w-full py-1.5 text-[10px] font-bold rounded border transition-all bg-amber-500/20 border-amber-400 text-amber-300 glow cursor-pointer";
+        t.innerText = "MODE: CHALLENGE";
     } else {
+        CONFIG.gameMode = 'normal';
         t.className = "mt-1 w-full py-1.5 text-[10px] font-bold rounded border transition-all bg-slate-900/40 border-slate-800 text-slate-500 cursor-pointer";
-        t.innerText = "ENGAGE OMNI-DIRECTIONAL";
+        t.innerText = "MODE: NORMAL";
     }
 });
 
@@ -280,3 +285,61 @@ const bindInput = (id, configKey, valTransform, textId, textFormat) => {
 bindInput('config-approach', 'approachTime', parseFloat, 'val-approach', v => v.toFixed(1) + 's');
 bindInput('config-cube', 'cubeScale', parseFloat, 'val-cube', v => v.toFixed(2) + 'x');
 bindInput('config-glow', 'visualizerGlow', parseFloat, 'val-glow', v => v.toFixed(1) + 'x');
+
+// --- CUSTOM BACKGROUND ---
+DOM('bg-picker-btn').addEventListener('click', () => {
+    if (CONFIG.customBg) {
+        // Revert to default
+        CONFIG.customBg = false;
+        const bgContainer = DOM('custom-bg');
+        bgContainer.innerHTML = '';
+        bgContainer.style.display = 'none';
+        // Restore opaque canvas
+        const canvas = document.querySelector('#game-container canvas');
+        if (canvas) canvas.style.background = '#020005';
+        DOM('bg-picker-btn').classList.remove('bg-fuchsia-500', 'text-slate-900');
+        DOM('bg-picker-btn').classList.add('bg-fuchsia-900/40', 'text-fuchsia-300');
+        DOM('bg-picker-btn').title = 'Custom Background';
+    } else {
+        DOM('bg-upload').click();
+    }
+});
+
+DOM('bg-upload').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const bgContainer = DOM('custom-bg');
+    bgContainer.innerHTML = '';
+
+    const url = URL.createObjectURL(file);
+    const isVideo = file.type.startsWith('video/');
+
+    if (isVideo) {
+        const video = document.createElement('video');
+        video.src = url;
+        video.autoplay = true;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        bgContainer.appendChild(video);
+    } else {
+        const img = document.createElement('img');
+        img.src = url;
+        bgContainer.appendChild(img);
+    }
+
+    bgContainer.style.display = 'block';
+    CONFIG.customBg = true;
+
+    // Make Phaser canvas transparent so the custom bg shows through
+    const canvas = document.querySelector('#game-container canvas');
+    if (canvas) canvas.style.background = 'transparent';
+
+    DOM('bg-picker-btn').classList.remove('bg-fuchsia-900/40', 'text-fuchsia-300');
+    DOM('bg-picker-btn').classList.add('bg-fuchsia-500', 'text-slate-900');
+    DOM('bg-picker-btn').title = 'Revert to Default Background';
+
+    // Reset the input so the same file can be re-selected later
+    e.target.value = '';
+});

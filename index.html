@@ -128,11 +128,25 @@
             background: rgba(56, 189, 248, 0.5);
             border-radius: 4px;
         }
+
+        #custom-bg {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+            display: none;
+            background: #000;
+        }
+        #custom-bg img, #custom-bg video {
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
     </style>
 </head>
 
 <body>
 
+    <div id="custom-bg"></div>
     <div id="game-container"></div>
 
     <div class="absolute inset-0 z-10 pointer-events-none scanlines-bg"></div>
@@ -210,22 +224,35 @@
             00:00 / 00:00
         </div>
 
-        <!-- How to play tooltip -->
-        <div id="how-to-play-container" class="absolute bottom-16 right-6 z-50 pointer-events-auto group">
+        <!-- Bottom-right utility buttons -->
+        <div id="how-to-play-container" class="absolute bottom-16 right-6 z-50 pointer-events-auto flex items-end gap-2">
+            <!-- Background picker -->
+            <input type="file" id="bg-upload" accept="image/*,video/*" class="hidden" />
+            <button id="bg-picker-btn"
+                class="w-8 h-8 rounded-full border border-fuchsia-500 bg-fuchsia-900/40 text-fuchsia-300 font-bold flex items-center justify-center hover:bg-fuchsia-500 hover:text-slate-900 transition-all cursor-pointer shadow-[0_0_10px_rgba(217,70,239,0.3)]" title="Custom Background">
+                🖼
+            </button>
+            <!-- How to play tooltip -->
+            <div class="relative group">
             <button
                 class="w-8 h-8 rounded-full border border-cyan-500 bg-cyan-900/40 text-cyan-300 font-bold flex items-center justify-center hover:bg-cyan-500 hover:text-slate-900 transition-all cursor-pointer shadow-[0_0_10px_rgba(34,211,238,0.3)]">
                 ?
             </button>
             <div
-                class="absolute bottom-10 right-0 w-[320px] bg-[#0a0a16]/95 backdrop-blur-xl border border-cyan-500/30 rounded-xl p-4 shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none text-xs text-slate-300 text-left flex flex-col gap-2">
+                class="absolute bottom-10 right-0 w-[340px] bg-[#0a0a16]/95 backdrop-blur-xl border border-cyan-500/30 rounded-xl p-4 shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none text-xs text-slate-300 text-left flex flex-col gap-2">
                 <div class="text-cyan-400 font-bold uppercase tracking-widest border-b border-cyan-900/50 pb-1 mb-1">
                     How to Play
                 </div>
-                <div><span class="text-fuchsia-400 font-bold">1.</span> Load an audio track.</div>
-                <div><span class="text-fuchsia-400 font-bold">2.</span> Click START to begin.</div>
-                <div><span class="text-fuchsia-400 font-bold">3.</span> SLICE through the blocks to the beat.</div>
-                <div><span class="text-fuchsia-400 font-bold">4.</span> While slicing, you MUST HOLD the corresponding arrow key or WASD key (e.g., hold W while slicing an UP block).</div>
-                <div><span class="text-fuchsia-400 font-bold">5.</span> Dots can be sliced with no key required.</div>
+                <div><span class="text-fuchsia-400 font-bold">1.</span> Load an audio track and click START.</div>
+                <div><span class="text-fuchsia-400 font-bold">2.</span> Slice through blocks to the beat using <span class="text-cyan-400">mouse drag</span> or <span class="text-cyan-400">touch swipe</span> (multi-touch supported!).</div>
+                <div><span class="text-fuchsia-400 font-bold">3.</span> <span class="text-cyan-400">Dot blocks</span> can be sliced in any direction.</div>
+
+                <div class="text-cyan-400 font-bold uppercase tracking-widest border-b border-cyan-900/50 pb-1 mt-2 mb-1">Game Modes</div>
+
+                <div><span class="text-green-400 font-bold">NORMAL:</span> Swipe <span class="text-cyan-400">in the arrow’s direction</span> to hit arrow blocks. You can also press the matching <span class="text-cyan-400">Arrow / WASD key</span> to hit the closest block directly.</div>
+                <div><span class="text-pink-400 font-bold">OMNI-DIRECTIONAL:</span> All blocks become <span class="text-cyan-400">dots</span> — slice in any direction with no key required. Great for relaxing!</div>
+                <div><span class="text-amber-400 font-bold">CHALLENGE:</span> You must <span class="text-cyan-400">hold the correct Arrow / WASD key</span> while swiping through arrow blocks. Keyboard-only hits are disabled. The ultimate test!</div>
+            </div>
             </div>
         </div>
 
@@ -315,8 +342,8 @@
                             data-val="custom">CST</button>
                     </div>
                     <button id="dots-toggle"
-                        class="mt-1 w-full py-1.5 text-[10px] font-bold rounded border bg-cyan-500/10 border-cyan-400 text-cyan-300 glow transition-all cursor-pointer">
-                        ENGAGE OMNI-DIRECTIONAL
+                        class="mt-1 w-full py-1.5 text-[10px] font-bold rounded border bg-slate-900/40 border-slate-800 text-slate-500 transition-all cursor-pointer">
+                        MODE: NORMAL
                     </button>
                     <button id="sensitivity-toggle"
                         class="mt-1 w-full py-1.5 text-[10px] font-bold rounded border bg-slate-900/40 border-slate-800 text-slate-500 transition-all cursor-pointer">
@@ -327,7 +354,7 @@
                 <div class="flex flex-col gap-2">
                     <span class="text-[10px] font-bold text-cyan-400 tracking-widest border-b border-cyan-900/50 pb-1">LEVEL SEED</span>
                     <div class="flex gap-2 items-center">
-                        <input type="text" id="seed-input" value="xtremezero" placeholder="Enter random seed..."
+                        <input type="text" id="seed-input" value="Neon" placeholder="Enter random seed..."
                             class="w-full bg-slate-900/50 border border-slate-700 rounded p-2 text-xs font-bold text-cyan-300 focus:outline-none focus:border-cyan-400 transition-all">
                         <button id="random-seed-btn" class="p-2 border border-slate-700 bg-slate-800/50 hover:border-fuchsia-400 hover:bg-fuchsia-900/20 hover:text-fuchsia-300 rounded text-xs font-bold text-slate-400 transition-all cursor-pointer" title="Generate Random Seed">
                             🎲

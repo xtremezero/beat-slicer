@@ -6,6 +6,8 @@ class MainScene extends Phaser.Scene {
         this.trailPoints = []; 
         this.retroOffset = 0; 
         this.lastBeatPulse = 0;
+        // Multi-touch: Map<pointerId, { lastPos: Vector2, trailPoints: [] }>
+        this.touchPointers = new Map();
     }
 
     preload() {
@@ -128,6 +130,26 @@ class MainScene extends Phaser.Scene {
 
         this.lastPointerPos = new Phaser.Math.Vector2(this.input.x, this.input.y);
 
+        // Enable multi-touch (up to 10 simultaneous pointers)
+        this.input.addPointer(9);
+
+        // Pointer down – register new touch
+        this.input.on('pointerdown', (ptr) => {
+            if (!this.touchPointers.has(ptr.id)) {
+                this.touchPointers.set(ptr.id, {
+                    lastPos: new Phaser.Math.Vector2(ptr.x, ptr.y),
+                    trailPoints: [{ x: ptr.x, y: ptr.y }]
+                });
+            }
+        });
+
+        // Pointer up / cancelled – remove touch state
+        const removePointer = (ptr) => {
+            this.touchPointers.delete(ptr.id);
+        };
+        this.input.on('pointerup', removePointer);
+        this.input.on('pointerupoutside', removePointer);
+
         this.cursors = this.input.keyboard.createCursorKeys();
         this.wasd = this.input.keyboard.addKeys({
             up: Phaser.Input.Keyboard.KeyCodes.W,
@@ -135,6 +157,16 @@ class MainScene extends Phaser.Scene {
             left: Phaser.Input.Keyboard.KeyCodes.A,
             right: Phaser.Input.Keyboard.KeyCodes.D
         });
+
+        // Keyboard-only directional hits (find closest block and hit/miss)
+        this.input.keyboard.on('keydown-UP', (event) => { if (!event.repeat) this.handleKeyboardHit(-90); });
+        this.input.keyboard.on('keydown-W', (event) => { if (!event.repeat) this.handleKeyboardHit(-90); });
+        this.input.keyboard.on('keydown-DOWN', (event) => { if (!event.repeat) this.handleKeyboardHit(90); });
+        this.input.keyboard.on('keydown-S', (event) => { if (!event.repeat) this.handleKeyboardHit(90); });
+        this.input.keyboard.on('keydown-LEFT', (event) => { if (!event.repeat) this.handleKeyboardHit(180); });
+        this.input.keyboard.on('keydown-A', (event) => { if (!event.repeat) this.handleKeyboardHit(180); });
+        this.input.keyboard.on('keydown-RIGHT', (event) => { if (!event.repeat) this.handleKeyboardHit(0); });
+        this.input.keyboard.on('keydown-D', (event) => { if (!event.repeat) this.handleKeyboardHit(0); });
 
         window.addEventListener('startGame', () => {
             this.blockSprites.forEach(obj => { obj.base.destroy(); obj.glow.destroy(); obj.icon.destroy(); obj.reticle.destroy(); });
@@ -175,24 +207,73 @@ class MainScene extends Phaser.Scene {
             this.sharedPoints = [{x:0, y:0}, {x:0, y:0}, {x:0, y:0}, {x:0, y:0}];
         }
 
-        // --- HOVER INPUT LOGIC ---
-        const ptr = this.input.activePointer;
-        const currentPos = new Phaser.Math.Vector2(ptr.x, ptr.y);
-        const dist = currentPos.distance(this.lastPointerPos);
+        // --- MULTI-TOUCH INPUT LOGIC ---
+        // Collect all active pointers (mouse + every touch finger)
+        const allPointers = this.input.manager.pointers.filter(p => p.active);
 
-        if (dist > 2 || this.trailPoints.length === 0) this.trailPoints.push({ x: currentPos.x, y: currentPos.y });
-        if (this.trailPoints.length > 15) this.trailPoints.shift();
-        if (dist < 1 && this.trailPoints.length > 1) this.trailPoints.shift();
+        // Ensure every active pointer has a tracking entry
+        for (const ptr of allPointers) {
+            if (!this.touchPointers.has(ptr.id)) {
+                this.touchPointers.set(ptr.id, {
+                    lastPos: new Phaser.Math.Vector2(ptr.x, ptr.y),
+                    trailPoints: [{ x: ptr.x, y: ptr.y }]
+                });
+            }
+        }
 
-        if (dist >= Math.min(CONFIG.swipeThreshold, 20)) this.checkSlices(this.lastPointerPos, currentPos, dist);
-        this.lastPointerPos.copy(currentPos);
+        // Remove stale entries for pointers that are no longer active
+        for (const [id] of this.touchPointers) {
+            if (!allPointers.find(p => p.id === id)) {
+                this.touchPointers.delete(id);
+            }
+        }
 
-        // --- DRAW CURSOR ---
-        if (gameIsPlaying) {
-            this.cursorGraphics.lineStyle(2, theme.primary, 0.8);
-            this.cursorGraphics.strokeCircle(currentPos.x, currentPos.y, 8);
-            this.cursorGraphics.fillStyle(theme.secondary, 1);
-            this.cursorGraphics.fillCircle(currentPos.x, currentPos.y, 3);
+        // Fallback: always keep mouse (pointer 0) in the map
+        const primaryPtr = this.input.activePointer;
+        if (!this.touchPointers.has(primaryPtr.id)) {
+            this.touchPointers.set(primaryPtr.id, {
+                lastPos: new Phaser.Math.Vector2(primaryPtr.x, primaryPtr.y),
+                trailPoints: [{ x: primaryPtr.x, y: primaryPtr.y }]
+            });
+        }
+
+        // Reset legacy single-pointer trail (we draw all trails in drawTrail now)
+        this.trailPoints = [];
+
+        // Process each pointer independently
+        for (const ptr of allPointers) {
+            const state = this.touchPointers.get(ptr.id);
+            if (!state) continue;
+
+            const currentPos = new Phaser.Math.Vector2(ptr.x, ptr.y);
+            const dist = currentPos.distance(state.lastPos);
+
+            if (dist > 2 || state.trailPoints.length === 0)
+                state.trailPoints.push({ x: currentPos.x, y: currentPos.y });
+            if (state.trailPoints.length > 15) state.trailPoints.shift();
+            if (dist < 1 && state.trailPoints.length > 1) state.trailPoints.shift();
+
+            if (dist >= Math.min(CONFIG.swipeThreshold, 20))
+                this.checkSlices(state.lastPos, currentPos, dist);
+
+            state.lastPos.copy(currentPos);
+
+            // Draw cursor ring for each active finger / mouse
+            if (gameIsPlaying) {
+                // Use different ring sizes for touch vs mouse
+                const isTouch = ptr.wasTouch;
+                const ringR = isTouch ? 18 : 8;
+                this.cursorGraphics.lineStyle(isTouch ? 3 : 2, theme.primary, 0.8);
+                this.cursorGraphics.strokeCircle(ptr.x, ptr.y, ringR);
+                this.cursorGraphics.fillStyle(theme.secondary, 1);
+                this.cursorGraphics.fillCircle(ptr.x, ptr.y, isTouch ? 5 : 3);
+
+                // Draw outer pulse ring for touch fingers
+                if (isTouch && ptr.isDown) {
+                    this.cursorGraphics.lineStyle(1, theme.secondary, 0.4);
+                    this.cursorGraphics.strokeCircle(ptr.x, ptr.y, ringR + 10);
+                }
+            }
         }
 
         // --- AUDIO REACTIVE BACKGROUND ---
@@ -230,6 +311,8 @@ class MainScene extends Phaser.Scene {
         const t = this.time.now * 0.0005;
 
         // --- DEEP SKY & HORIZON ---
+        this.sunSprite.setVisible(!CONFIG.customBg);
+        if (!CONFIG.customBg) {
         const bgSkyTop = gameIsPlaying ? 0x010002 : 0x020005;
         const bgSkyMid1 = gameIsPlaying ? 0x04000a : 0x0a001a;
         const bgSkyMid2 = gameIsPlaying ? 0x0a0014 : 0x1f0033;
@@ -409,6 +492,7 @@ class MainScene extends Phaser.Scene {
         } else {
             this.currentDarkAlpha = 0.1;
         }
+        } // end if (!CONFIG.customBg)
 
         // --- DRAW POLISHED TARGET SYNC RING AND CIRCULAR EQ ---
         const ringScale = 1 + bassEnergy * 0.15;
@@ -476,7 +560,7 @@ class MainScene extends Phaser.Scene {
                 
                 const color = Math.random() > 0.5 ? theme.primary : theme.secondary;
                 
-                const isActDot = CONFIG.dotsOnlyMode ? true : b.isDot;
+                const isActDot = CONFIG.gameMode === 'omni' ? true : b.isDot;
                 const iconStr = isActDot ? 'tex_dot' : 'tex_arrow';
 
                 const glow = this.add.sprite(cx, transitionY - 20, 'tex_aura').setTint(color).setBlendMode(Phaser.BlendModes.SCREEN).setAlpha(0);
@@ -590,19 +674,25 @@ class MainScene extends Phaser.Scene {
     }
 
     drawTrail(theme, bassEnergy = 0) {
-        if (this.trailPoints.length > 1) {
-            let trailColor = theme.primary;
-            for (let i = 1; i < this.trailPoints.length; i++) {
-                const p1 = this.trailPoints[i-1];
-                const p2 = this.trailPoints[i];
-                const alpha = (i / this.trailPoints.length);
-                
+        // Draw a trail for every tracked pointer (multi-touch aware)
+        const allTrails = this.touchPointers.size > 0
+            ? [...this.touchPointers.values()].map(s => s.trailPoints)
+            : [this.trailPoints];
+
+        for (const points of allTrails) {
+            if (points.length < 2) continue;
+            const trailColor = theme.primary;
+            for (let i = 1; i < points.length; i++) {
+                const p1 = points[i - 1];
+                const p2 = points[i];
+                const alpha = (i / points.length);
+
                 this.trailGraphics.lineStyle((15 + bassEnergy * 10) * alpha, trailColor, alpha * 0.8);
                 this.trailGraphics.beginPath();
                 this.trailGraphics.moveTo(p1.x, p1.y);
                 this.trailGraphics.lineTo(p2.x, p2.y);
                 this.trailGraphics.strokePath();
-                
+
                 this.trailGraphics.lineStyle(6 * alpha, 0xffffff, alpha);
                 this.trailGraphics.beginPath();
                 this.trailGraphics.moveTo(p1.x, p1.y);
@@ -623,74 +713,137 @@ class MainScene extends Phaser.Scene {
                     
                     let angleMatch = true;
                     if (!block.isActDot && block.data.dir) {
-                        angleMatch = false;
-                        const angle = block.data.dir.angle;
-                        if (angle === -90 && (this.cursors.up.isDown || this.wasd.up.isDown)) {
-                            angleMatch = true;
-                        } else if (angle === 90 && (this.cursors.down.isDown || this.wasd.down.isDown)) {
-                            angleMatch = true;
-                        } else if ((angle === 180 || angle === -180) && (this.cursors.left.isDown || this.wasd.left.isDown)) {
-                            angleMatch = true;
-                        } else if (angle === 0 && (this.cursors.right.isDown || this.wasd.right.isDown)) {
-                            angleMatch = true;
+                        const blockAngle = block.data.dir.angle;
+
+                        if (CONFIG.gameMode === 'challenge') {
+                            // Challenge mode: must HOLD the matching keyboard key while swiping
+                            angleMatch = false;
+                            if (blockAngle === -90 && (this.cursors.up.isDown || this.wasd.up.isDown)) {
+                                angleMatch = true;
+                            } else if (blockAngle === 90 && (this.cursors.down.isDown || this.wasd.down.isDown)) {
+                                angleMatch = true;
+                            } else if ((blockAngle === 180 || blockAngle === -180) && (this.cursors.left.isDown || this.wasd.left.isDown)) {
+                                angleMatch = true;
+                            } else if (blockAngle === 0 && (this.cursors.right.isDown || this.wasd.right.isDown)) {
+                                angleMatch = true;
+                            }
+                        } else {
+                            // Normal mode: match swipe direction to arrow direction (45° grace)
+                            angleMatch = this.angleDifference(swipeAngle, blockAngle) <= 45;
                         }
                     }
 
                     if (angleMatch) {
-                        let hitResult = "MISS";
-                        let pts = 0;
-                        let hitColor = 0x475569; 
-
-                        if (block.syncGap <= 0.12) { 
-                            hitResult = "PERFECT"; pts = 200; hitColor = 0x00e5ff; statsPerfects++; statsHits++; // Cyan
-                        } else if (block.syncGap <= 0.25) { 
-                            hitResult = "GOOD"; pts = 100; hitColor = 0xff007f; statsGoods++; statsHits++; // Pink
-                        } else { 
-                            hitResult = "OK"; pts = 50; hitColor = 0xffffff; statsOks++; statsHits++; // White
-                        }
-
-                        combo++;
-                        displayCombo = Math.min(8.0, 1.0 + Math.floor(combo / 10) * 0.5);
-                        const actualScoreAdded = Math.floor(pts * displayCombo);
-                        score += actualScoreAdded;
-
-                        // --- STEAM: Combo milestone achievements ---
-                        if (typeof SteamAchievements !== 'undefined') {
-                            SteamAchievements.checkComboMilestone(displayCombo, combo);
-                        }
-                        
-                        // Screen Flash / Camera Shake
-                        if (hitResult === "PERFECT") {
-                            this.cameras.main.shake(80, 0.012);
-                            this.cameras.main.zoomTo(1.03, 40, 'Quad.easeOut', true, (c, p) => {
-                                if(p===1) c.zoomTo(1.0, 100, 'Quad.easeIn');
-                            });
-                            // Screen flash burst additive overlay
-                            const flash = this.add.rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width, this.scale.height, 0xffffff, 0.2)
-                                .setBlendMode(Phaser.BlendModes.ADD).setDepth(100);
-                            this.tweens.add({ targets: flash, alpha: 0, duration: 150, onComplete: () => flash.destroy() });
-                        } else {
-                            this.cameras.main.shake(40, 0.005);
-                        }
-
-                        this.createParticles(block.base.x, block.base.y, block.color, hitResult === "PERFECT");
-                        this.spawnFloatingText(block.base.x, block.base.y, `${hitResult}\n+${actualScoreAdded}`, hitColor, hitResult === "PERFECT");
-                        
-                        block.glow.destroy(); block.base.destroy(); block.icon.destroy(); block.reticle.destroy();
-                        this.blockSprites.delete(id);
-                        this.updateScore();
+                        this.registerHit(id, block);
                     } else {
-                        combo = 0; displayCombo = 1.0;
-                        statsMisses++;
-                        this.cameras.main.shake(120, 0.01);
-                        this.spawnFloatingText(block.base.x, block.base.y, "MISS\n+0", 0x475569);
-                        block.glow.destroy(); block.base.destroy(); block.icon.destroy(); block.reticle.destroy();
-                        this.blockSprites.delete(id);
-                        this.updateScore();
+                        this.registerMiss(id, block);
                     }
                 }
             }
         }
+    }
+
+    // Returns the absolute angular difference between two angles in degrees,
+    // correctly handling wraparound (e.g. -170° vs 170° = 20°).
+    angleDifference(a1, a2) {
+        let diff = a1 - a2;
+        while (diff > 180) diff -= 360;
+        while (diff < -180) diff += 360;
+        return Math.abs(diff);
+    }
+
+    // Keyboard-only hit: find the closest hitable block by timing,
+    // then check if the pressed direction matches.
+    // Disabled in Challenge mode (must swipe + hold key instead).
+    handleKeyboardHit(keyDirection) {
+        if (!gameIsPlaying) return;
+        if (CONFIG.gameMode === 'challenge') return;
+
+        let closestBlock = null;
+        let closestId = null;
+        let closestSyncGap = Infinity;
+
+        for (const [id, block] of this.blockSprites.entries()) {
+            if (block.isHitable && block.syncGap < closestSyncGap) {
+                closestSyncGap = block.syncGap;
+                closestBlock = block;
+                closestId = id;
+            }
+        }
+
+        if (!closestBlock) return;
+
+        // Dots always match any direction key
+        let directionMatch = true;
+        if (!closestBlock.isActDot && closestBlock.data.dir) {
+            const blockAngle = closestBlock.data.dir.angle;
+            // Exact direction match for keyboard
+            // up=-90, down=90, left=180/-180, right=0
+            directionMatch = this.angleDifference(keyDirection, blockAngle) <= 1;
+        }
+
+        if (directionMatch) {
+            this.registerHit(closestId, closestBlock);
+        } else {
+            this.registerMiss(closestId, closestBlock);
+        }
+    }
+
+    // Shared hit logic – scores PERFECT / GOOD / OK based on syncGap,
+    // updates combo, spawns particles & floating text, destroys the block.
+    registerHit(id, block) {
+        let hitResult = "MISS";
+        let pts = 0;
+        let hitColor = 0x475569;
+
+        if (block.syncGap <= 0.12) {
+            hitResult = "PERFECT"; pts = 200; hitColor = 0x00e5ff; statsPerfects++; statsHits++;
+        } else if (block.syncGap <= 0.25) {
+            hitResult = "GOOD"; pts = 100; hitColor = 0xff007f; statsGoods++; statsHits++;
+        } else {
+            hitResult = "OK"; pts = 50; hitColor = 0xffffff; statsOks++; statsHits++;
+        }
+
+        combo++;
+        displayCombo = Math.min(8.0, 1.0 + Math.floor(combo / 10) * 0.5);
+        const actualScoreAdded = Math.floor(pts * displayCombo);
+        score += actualScoreAdded;
+
+        // --- STEAM: Combo milestone achievements ---
+        if (typeof SteamAchievements !== 'undefined') {
+            SteamAchievements.checkComboMilestone(displayCombo, combo);
+        }
+
+        // Screen Flash / Camera Shake
+        if (hitResult === "PERFECT") {
+            this.cameras.main.shake(80, 0.012);
+            this.cameras.main.zoomTo(1.03, 40, 'Quad.easeOut', true, (c, p) => {
+                if(p===1) c.zoomTo(1.0, 100, 'Quad.easeIn');
+            });
+            const flash = this.add.rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width, this.scale.height, 0xffffff, 0.2)
+                .setBlendMode(Phaser.BlendModes.ADD).setDepth(100);
+            this.tweens.add({ targets: flash, alpha: 0, duration: 150, onComplete: () => flash.destroy() });
+        } else {
+            this.cameras.main.shake(40, 0.005);
+        }
+
+        this.createParticles(block.base.x, block.base.y, block.color, hitResult === "PERFECT");
+        this.spawnFloatingText(block.base.x, block.base.y, `${hitResult}\n+${actualScoreAdded}`, hitColor, hitResult === "PERFECT");
+
+        block.glow.destroy(); block.base.destroy(); block.icon.destroy(); block.reticle.destroy();
+        this.blockSprites.delete(id);
+        this.updateScore();
+    }
+
+    // Shared miss logic – resets combo, shakes camera, destroys the block.
+    registerMiss(id, block) {
+        combo = 0; displayCombo = 1.0;
+        statsMisses++;
+        this.cameras.main.shake(120, 0.01);
+        this.spawnFloatingText(block.base.x, block.base.y, "MISS\n+0", 0x475569);
+        block.glow.destroy(); block.base.destroy(); block.icon.destroy(); block.reticle.destroy();
+        this.blockSprites.delete(id);
+        this.updateScore();
     }
 
     spawnFloatingText(x, y, message, color, isPerfect = false) {
